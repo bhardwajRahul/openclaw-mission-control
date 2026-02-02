@@ -32,6 +32,7 @@ export * from "./task";
 export * from "./taskComment";
 export * from "./taskCommentCreate";
 export * from "./taskCreate";
+export * from "./taskReviewDecision";
 export * from "./taskUpdate";
 export * from "./team";
 export * from "./teamCreate";

@@ -13,7 +13,7 @@ from app.integrations.notify import NotifyContext, notify_openclaw
 from app.integrations.openclaw import OpenClawClient
 from app.models.org import Employee
 from app.models.work import Task, TaskComment
-from app.schemas.work import TaskCommentCreate, TaskCreate, TaskUpdate
+from app.schemas.work import TaskCommentCreate, TaskCreate, TaskReviewDecision, TaskUpdate
 
 logger = logging.getLogger("app.work")
 
@@ -149,6 +149,97 @@ def dispatch_task(
     return {"ok": True}
 
 
+def _require_reviewer_comment(body: str | None) -> str:
+    if body is None or not body.strip():
+        raise HTTPException(status_code=400, detail="Reviewer must provide a comment for audit")
+    return body.strip()
+
+
+@router.post("/tasks/{task_id}/review", response_model=Task)
+def review_task(
+    task_id: int,
+    payload: TaskReviewDecision,
+    background: BackgroundTasks,
+    session: Session = Depends(get_session),
+    actor_employee_id: int = Depends(get_actor_employee_id),
+):
+    """Reviewer approves or requests changes.
+
+    - Approve => status=done
+    - Changes => status=in_progress
+
+    Always writes a TaskComment by the reviewer for audit.
+    """
+
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.reviewer_employee_id is None:
+        raise HTTPException(status_code=400, detail="Task has no reviewer")
+
+    if actor_employee_id != task.reviewer_employee_id:
+        raise HTTPException(status_code=403, detail="Only the reviewer can approve/request changes")
+
+    decision = (payload.decision or "").strip().lower()
+    if decision not in {"approve", "changes"}:
+        raise HTTPException(status_code=400, detail="Invalid decision")
+
+    comment_body = _require_reviewer_comment(payload.comment_body)
+
+    new_status = "done" if decision == "approve" else "in_progress"
+
+    before_status = task.status
+    task.status = new_status
+    task.updated_at = datetime.utcnow()
+    session.add(task)
+
+    c = TaskComment(task_id=task.id, author_employee_id=actor_employee_id, body=comment_body)
+    session.add(c)
+
+    try:
+        session.flush()
+        log_activity(
+            session,
+            actor_employee_id=actor_employee_id,
+            entity_type="task",
+            entity_id=task.id,
+            verb="reviewed",
+            payload={"decision": decision, "status": new_status},
+        )
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Review action violates constraints")
+
+    session.refresh(task)
+    session.refresh(c)
+
+    # Notify assignee (comment.created will exclude author)
+    background.add_task(
+        notify_openclaw,
+        session,
+        NotifyContext(
+            event="comment.created", actor_employee_id=actor_employee_id, task=task, comment=c
+        ),
+    )
+
+    # Notify reviewer/PMs about status change
+    if before_status != task.status:
+        background.add_task(
+            notify_openclaw,
+            session,
+            NotifyContext(
+                event="status.changed",
+                actor_employee_id=actor_employee_id,
+                task=task,
+                changed_fields={"status": {"from": before_status, "to": task.status}},
+            ),
+        )
+
+    return Task.model_validate(task)
+
+
 @router.patch("/tasks/{task_id}", response_model=Task)
 def update_task(
     task_id: int,
@@ -173,6 +264,20 @@ def update_task(
         _validate_task_assignee(session, data["assignee_employee_id"])
     if "status" in data and data["status"] not in ALLOWED_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
+
+    # Enforce review workflow: agent assignees cannot mark tasks done directly.
+    if data.get("status") == "done":
+        assignee = (
+            session.get(Employee, task.assignee_employee_id) if task.assignee_employee_id else None
+        )
+        if assignee is not None and assignee.employee_type == "agent":
+            if actor_employee_id == task.assignee_employee_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Assignee agents cannot mark tasks done; set status=review for manager approval",
+                )
+        if task.reviewer_employee_id is not None and actor_employee_id != task.reviewer_employee_id:
+            raise HTTPException(status_code=403, detail="Only the reviewer can mark a task done")
 
     # If a task is sent to review and no reviewer is set, default reviewer to assignee's manager.
     if (
