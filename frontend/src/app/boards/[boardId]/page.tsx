@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs";
+import { X } from "lucide-react";
 
 import { DashboardSidebar } from "@/components/organisms/DashboardSidebar";
 import { TaskBoard } from "@/components/organisms/TaskBoard";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { getApiBaseUrl } from "@/lib/api-base";
+import { cn } from "@/lib/utils";
 
 type Board = {
   id: string;
@@ -47,6 +49,7 @@ type Task = {
 type Agent = {
   id: string;
   name: string;
+  status: string;
   board_id?: string | null;
 };
 
@@ -82,7 +85,7 @@ export default function BoardDetailPage() {
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [isCommentsLoading, setIsCommentsLoading] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
-  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [title, setTitle] = useState("");
@@ -216,6 +219,35 @@ export default function BoardDetailPage() {
     [tasks, assigneeById],
   );
 
+  const boardAgents = useMemo(
+    () => agents.filter((agent) => !boardId || agent.board_id === boardId),
+    [agents, boardId],
+  );
+
+  const workingAgentIds = useMemo(() => {
+    const working = new Set<string>();
+    tasks.forEach((task) => {
+      if (task.status === "in_progress" && task.assigned_agent_id) {
+        working.add(task.assigned_agent_id);
+      }
+    });
+    return working;
+  }, [tasks]);
+
+  const sortedAgents = useMemo(() => {
+    const rank = (agent: Agent) => {
+      if (workingAgentIds.has(agent.id)) return 0;
+      if (agent.status === "online") return 1;
+      if (agent.status === "provisioning") return 2;
+      return 3;
+    };
+    return [...boardAgents].sort((a, b) => {
+      const diff = rank(a) - rank(b);
+      if (diff !== 0) return diff;
+      return a.name.localeCompare(b.name);
+    });
+  }, [boardAgents, workingAgentIds]);
+
   const loadComments = async (taskId: string) => {
     if (!isSignedIn || !boardId) return;
     setIsCommentsLoading(true);
@@ -242,15 +274,31 @@ export default function BoardDetailPage() {
 
   const openComments = (task: Task) => {
     setSelectedTask(task);
-    setIsCommentsOpen(true);
+    setIsDetailOpen(true);
     void loadComments(task.id);
   };
 
   const closeComments = () => {
-    setIsCommentsOpen(false);
+    setIsDetailOpen(false);
     setSelectedTask(null);
     setComments([]);
     setCommentsError(null);
+  };
+
+  const agentInitials = (name: string) =>
+    name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase();
+
+  const agentStatusLabel = (agent: Agent) => {
+    if (workingAgentIds.has(agent.id)) return "Working";
+    if (agent.status === "online") return "Active";
+    if (agent.status === "provisioning") return "Provisioning";
+    return "Offline";
   };
 
   const formatCommentTimestamp = (value: string) => {
@@ -318,62 +366,147 @@ export default function BoardDetailPage() {
             </div>
           </div>
 
-          <div className="p-6">
-            {error && (
-              <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600 shadow-sm">
-                {error}
+          <div className="relative flex gap-6 p-6">
+            <aside className="flex h-full w-64 flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Agents
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {sortedAgents.length} total
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => router.push("/agents/new")}
+                  className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  Add
+                </button>
               </div>
-            )}
+              <div className="flex-1 space-y-2 overflow-y-auto p-3">
+                {sortedAgents.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-slate-200 p-3 text-xs text-slate-500">
+                    No agents assigned yet.
+                  </div>
+                ) : (
+                  sortedAgents.map((agent) => {
+                    const isWorking = workingAgentIds.has(agent.id);
+                    return (
+                      <div
+                        key={agent.id}
+                        className={cn(
+                          "flex items-center gap-3 rounded-lg border border-transparent px-2 py-2 transition hover:border-slate-200 hover:bg-slate-50",
+                        )}
+                      >
+                        <div className="relative flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">
+                          {agentInitials(agent.name)}
+                          <span
+                            className={cn(
+                              "absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-white",
+                              isWorking
+                                ? "bg-emerald-500"
+                                : agent.status === "online"
+                                  ? "bg-green-500"
+                                  : "bg-slate-300",
+                            )}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-slate-900">
+                            {agent.name}
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            {agentStatusLabel(agent)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </aside>
 
-            {isLoading ? (
-              <div className="flex min-h-[50vh] items-center justify-center text-sm text-slate-500">
-                Loading {titleLabel}…
-              </div>
-            ) : (
-              <TaskBoard
-                tasks={displayTasks}
-                onCreateTask={() => setIsDialogOpen(true)}
-                isCreateDisabled={isCreating}
-                onTaskSelect={openComments}
-              />
-            )}
+            <div className="min-w-0 flex-1">
+              {error && (
+                <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600 shadow-sm">
+                  {error}
+                </div>
+              )}
+
+              {isLoading ? (
+                <div className="flex min-h-[50vh] items-center justify-center text-sm text-slate-500">
+                  Loading {titleLabel}…
+                </div>
+              ) : (
+                <TaskBoard
+                  tasks={displayTasks}
+                  onCreateTask={() => setIsDialogOpen(true)}
+                  isCreateDisabled={isCreating}
+                  onTaskSelect={openComments}
+                />
+              )}
+            </div>
           </div>
         </main>
       </SignedIn>
-
-      <Dialog open={isCommentsOpen} onOpenChange={(open) => {
-        if (!open) {
-          closeComments();
-        }
-      }}>
-        <DialogContent aria-label="Task comments">
-          <DialogHeader>
-            <DialogTitle>{selectedTask?.title ?? "Task"}</DialogTitle>
-            <DialogDescription>
-              {selectedTask?.description || "Task details and discussion."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
+      {isDetailOpen ? (
+        <div className="fixed inset-0 z-40 bg-slate-900/20" onClick={closeComments} />
+      ) : null}
+      <aside
+        className={cn(
+          "fixed right-0 top-0 z-50 h-full w-[420px] max-w-[92vw] transform bg-white shadow-2xl transition-transform",
+          isDetailOpen ? "translate-x-0" : "translate-x-full",
+        )}
+      >
+        <div className="flex h-full flex-col">
+          <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Task detail
+              </p>
+              <p className="mt-1 text-sm font-medium text-slate-900">
+                {selectedTask?.title ?? "Task"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={closeComments}
+              className="rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Description
+              </p>
+              <p className="text-sm text-slate-700">
+                {selectedTask?.description || "No description provided."}
+              </p>
+            </div>
             <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-[0.3em] text-quiet">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Comments
-              </div>
+              </p>
               {isCommentsLoading ? (
-                <p className="text-sm text-muted">Loading comments…</p>
+                <p className="text-sm text-slate-500">Loading comments…</p>
               ) : commentsError ? (
-                <div className="rounded-lg border border-[color:var(--border)] bg-[color:var(--surface-muted)] p-3 text-xs text-muted">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
                   {commentsError}
                 </div>
               ) : comments.length === 0 ? (
-                <p className="text-sm text-muted">No comments yet.</p>
+                <p className="text-sm text-slate-500">No comments yet.</p>
               ) : (
                 <div className="space-y-3">
                   {comments.map((comment) => (
                     <div
                       key={comment.id}
-                      className="rounded-xl border border-[color:var(--border)] bg-[color:var(--surface)] p-3"
+                      className="rounded-xl border border-slate-200 bg-white p-3"
                     >
-                      <div className="flex items-center justify-between text-xs text-muted">
+                      <div className="flex items-center justify-between text-xs text-slate-500">
                         <span>
                           {comment.agent_id
                             ? assigneeById.get(comment.agent_id) ?? "Agent"
@@ -381,7 +514,7 @@ export default function BoardDetailPage() {
                         </span>
                         <span>{formatCommentTimestamp(comment.created_at)}</span>
                       </div>
-                      <p className="mt-2 text-sm text-strong">
+                      <p className="mt-2 text-sm text-slate-900">
                         {comment.message || "—"}
                       </p>
                     </div>
@@ -390,13 +523,8 @@ export default function BoardDetailPage() {
               )}
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeComments}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </div>
+      </aside>
 
       <Dialog
         open={isDialogOpen}
