@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
+import asyncio
+import re
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete
+from sqlmodel import Session, col, select
 
 from app.api.deps import (
     ActorContext,
@@ -11,10 +16,58 @@ from app.api.deps import (
 )
 from app.core.auth import AuthContext
 from app.db.session import get_session
+from app.integrations.openclaw_gateway import (
+    GatewayConfig,
+    OpenClawGatewayError,
+    delete_session,
+    ensure_session,
+    send_message,
+)
+from app.models.activity_events import ActivityEvent
+from app.models.agents import Agent
 from app.models.boards import Board
+from app.models.tasks import Task
 from app.schemas.boards import BoardCreate, BoardRead, BoardUpdate
 
 router = APIRouter(prefix="/boards", tags=["boards"])
+
+AGENT_SESSION_PREFIX = "agent"
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or uuid4().hex
+
+
+def _build_session_key(agent_name: str) -> str:
+    return f"{AGENT_SESSION_PREFIX}:{_slugify(agent_name)}:main"
+
+
+def _board_gateway_config(board: Board) -> GatewayConfig | None:
+    if not board.gateway_url:
+        return None
+    return GatewayConfig(url=board.gateway_url, token=board.gateway_token)
+
+
+async def _cleanup_agent_on_gateway(agent: Agent, board: Board, config: GatewayConfig) -> None:
+    if agent.openclaw_session_id:
+        await delete_session(agent.openclaw_session_id, config=config)
+    main_session = board.gateway_main_session_key or "agent:main:main"
+    workspace_root = board.gateway_workspace_root or "~/.openclaw/workspaces"
+    workspace_path = f"{workspace_root.rstrip('/')}/{_slugify(agent.name)}"
+    cleanup_message = (
+        "Cleanup request for deleted agent.\n\n"
+        f"Agent name: {agent.name}\n"
+        f"Agent id: {agent.id}\n"
+        f"Session key: {agent.openclaw_session_id or _build_session_key(agent.name)}\n"
+        f"Workspace path: {workspace_path}\n\n"
+        "Actions:\n"
+        "1) Remove the workspace directory.\n"
+        "2) Delete any lingering session artifacts.\n"
+        "Reply NO_REPLY."
+    )
+    await ensure_session(main_session, config=config, label="Main Agent")
+    await send_message(cleanup_message, session_key=main_session, config=config, deliver=False)
 
 
 @router.get("", response_model=list[BoardRead])
@@ -73,6 +126,33 @@ def delete_board(
     board: Board = Depends(get_board_or_404),
     auth: AuthContext = Depends(require_admin_auth),
 ) -> dict[str, bool]:
+    agents = list(session.exec(select(Agent).where(Agent.board_id == board.id)))
+    task_ids = list(
+        session.exec(select(Task.id).where(Task.board_id == board.id))
+    )
+
+    config = _board_gateway_config(board)
+    if config:
+        try:
+            for agent in agents:
+                asyncio.run(_cleanup_agent_on_gateway(agent, board, config))
+        except OpenClawGatewayError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Gateway cleanup failed: {exc}",
+            ) from exc
+
+    if task_ids:
+        session.execute(
+            delete(ActivityEvent).where(col(ActivityEvent.task_id).in_(task_ids))
+        )
+    if agents:
+        agent_ids = [agent.id for agent in agents]
+        session.execute(
+            delete(ActivityEvent).where(col(ActivityEvent.agent_id).in_(agent_ids))
+        )
+        session.execute(delete(Agent).where(col(Agent.id).in_(agent_ids)))
+    session.execute(delete(Task).where(col(Task.board_id) == board.id))
     session.delete(board)
     session.commit()
     return {"ok": True}
