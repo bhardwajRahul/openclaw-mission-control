@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { TaskCard } from "@/components/molecules/TaskCard";
 import { cn } from "@/lib/utils";
@@ -77,13 +77,162 @@ const formatDueDate = (value?: string | null) => {
   });
 };
 
+type CardPosition = { left: number; top: number };
+
+const KANBAN_MOVE_ANIMATION_MS = 240;
+const KANBAN_MOVE_EASING = "cubic-bezier(0.2, 0.8, 0.2, 1)";
+
 export const TaskBoard = memo(function TaskBoard({
   tasks,
   onTaskSelect,
   onTaskMove,
 }: TaskBoardProps) {
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const prevPositionsRef = useRef<Map<string, CardPosition>>(new Map());
+  const animationRafRef = useRef<number | null>(null);
+  const cleanupTimeoutRef = useRef<number | null>(null);
+  const animatedTaskIdsRef = useRef<Set<string>>(new Set());
+
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [activeColumn, setActiveColumn] = useState<TaskStatus | null>(null);
+
+  const setCardRef = useCallback(
+    (taskId: string) => (node: HTMLDivElement | null) => {
+      if (node) {
+        cardRefs.current.set(taskId, node);
+        return;
+      }
+      cardRefs.current.delete(taskId);
+    },
+    [],
+  );
+
+  const measurePositions = useCallback((): Map<string, CardPosition> => {
+    const positions = new Map<string, CardPosition>();
+    const container = boardRef.current;
+    const containerRect = container?.getBoundingClientRect();
+    const scrollLeft = container?.scrollLeft ?? 0;
+    const scrollTop = container?.scrollTop ?? 0;
+
+    for (const [taskId, element] of cardRefs.current.entries()) {
+      const rect = element.getBoundingClientRect();
+      positions.set(taskId, {
+        left:
+          containerRect && container
+            ? rect.left - containerRect.left + scrollLeft
+            : rect.left,
+        top:
+          containerRect && container
+            ? rect.top - containerRect.top + scrollTop
+            : rect.top,
+      });
+    }
+
+    return positions;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (animationRafRef.current !== null) {
+      window.cancelAnimationFrame(animationRafRef.current);
+      animationRafRef.current = null;
+    }
+    if (cleanupTimeoutRef.current !== null) {
+      window.clearTimeout(cleanupTimeoutRef.current);
+      cleanupTimeoutRef.current = null;
+    }
+    for (const taskId of animatedTaskIdsRef.current) {
+      const element = cardRefs.current.get(taskId);
+      if (!element) continue;
+      element.style.transform = "";
+      element.style.transition = "";
+      element.style.willChange = "";
+      element.style.position = "";
+      element.style.zIndex = "";
+    }
+    animatedTaskIdsRef.current.clear();
+
+    const prevPositions = prevPositionsRef.current;
+    const nextPositions = measurePositions();
+    prevPositionsRef.current = nextPositions;
+
+    // Avoid fighting the browser while it manages the drag image.
+    if (draggingId) return;
+
+    const prefersReducedMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    if (prefersReducedMotion) return;
+
+    const moved: Array<{
+      taskId: string;
+      element: HTMLDivElement;
+      dx: number;
+      dy: number;
+    }> = [];
+    for (const [taskId, next] of nextPositions.entries()) {
+      const prev = prevPositions.get(taskId);
+      if (!prev) continue;
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+      const element = cardRefs.current.get(taskId);
+      if (!element) continue;
+      moved.push({ taskId, element, dx, dy });
+    }
+
+    if (!moved.length) return;
+    animatedTaskIdsRef.current = new Set(moved.map(({ taskId }) => taskId));
+
+    // FLIP: invert to the previous position before paint, then animate back to 0.
+    for (const { element, dx, dy } of moved) {
+      element.style.transform = `translate(${dx}px, ${dy}px)`;
+      element.style.transition = "transform 0s";
+      element.style.willChange = "transform";
+      element.style.position = "relative";
+      element.style.zIndex = "1";
+    }
+
+    animationRafRef.current = window.requestAnimationFrame(() => {
+      for (const { element } of moved) {
+        element.style.transition = `transform ${KANBAN_MOVE_ANIMATION_MS}ms ${KANBAN_MOVE_EASING}`;
+        element.style.transform = "";
+      }
+
+      cleanupTimeoutRef.current = window.setTimeout(() => {
+        for (const { element } of moved) {
+          element.style.transition = "";
+          element.style.willChange = "";
+          element.style.position = "";
+          element.style.zIndex = "";
+        }
+        animatedTaskIdsRef.current.clear();
+        cleanupTimeoutRef.current = null;
+      }, KANBAN_MOVE_ANIMATION_MS + 60);
+
+      animationRafRef.current = null;
+    });
+
+    return () => {
+      if (animationRafRef.current !== null) {
+        window.cancelAnimationFrame(animationRafRef.current);
+        animationRafRef.current = null;
+      }
+      if (cleanupTimeoutRef.current !== null) {
+        window.clearTimeout(cleanupTimeoutRef.current);
+        cleanupTimeoutRef.current = null;
+      }
+      for (const taskId of animatedTaskIdsRef.current) {
+        const element = cardRefs.current.get(taskId);
+        if (!element) continue;
+        element.style.transform = "";
+        element.style.transition = "";
+        element.style.willChange = "";
+        element.style.position = "";
+        element.style.zIndex = "";
+      }
+      animatedTaskIdsRef.current.clear();
+    };
+  }, [draggingId, measurePositions, tasks]);
 
   const grouped = useMemo(() => {
     const buckets: Record<TaskStatus, Task[]> = {
@@ -148,7 +297,10 @@ export const TaskBoard = memo(function TaskBoard({
     };
 
   return (
-    <div className="grid grid-flow-col auto-cols-[minmax(260px,320px)] gap-4 overflow-x-auto pb-6">
+    <div
+      ref={boardRef}
+      className="grid grid-flow-col auto-cols-[minmax(260px,320px)] gap-4 overflow-x-auto pb-6"
+    >
       {columns.map((column) => {
         const columnTasks = grouped[column.status] ?? [];
         return (
@@ -183,8 +335,8 @@ export const TaskBoard = memo(function TaskBoard({
             <div className="rounded-b-xl border border-t-0 border-slate-200 bg-white p-3">
               <div className="space-y-3">
                 {columnTasks.map((task) => (
+                  <div key={task.id} ref={setCardRef(task.id)}>
                     <TaskCard
-                      key={task.id}
                       title={task.title}
                       priority={task.priority}
                       assignee={task.assignee ?? undefined}
@@ -195,7 +347,8 @@ export const TaskBoard = memo(function TaskBoard({
                       isDragging={draggingId === task.id}
                       onDragStart={handleDragStart(task)}
                       onDragEnd={handleDragEnd}
-                  />
+                    />
+                  </div>
                 ))}
               </div>
             </div>
