@@ -62,6 +62,7 @@ import type {
   TaskRead,
 } from "@/api/generated/model";
 import { createExponentialBackoff } from "@/lib/backoff";
+import { apiDatetimeToMs, parseApiDatetime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 type Board = BoardRead;
@@ -250,8 +251,8 @@ const Markdown = memo(function Markdown({
 Markdown.displayName = "Markdown";
 
 const formatShortTimestamp = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
+  const date = parseApiDatetime(value);
+  if (!date) return "—";
   return date.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -476,8 +477,8 @@ export default function BoardDetailPage() {
     items.forEach((task) => {
       const value = task.updated_at ?? task.created_at;
       if (!value) return;
-      const time = new Date(value).getTime();
-      if (!Number.isNaN(time) && time > latestTime) {
+      const time = apiDatetimeToMs(value);
+      if (time !== null && time > latestTime) {
         latestTime = time;
       }
     });
@@ -489,8 +490,8 @@ export default function BoardDetailPage() {
     items.forEach((approval) => {
       const value = approval.resolved_at ?? approval.created_at;
       if (!value) return;
-      const time = new Date(value).getTime();
-      if (!Number.isNaN(time) && time > latestTime) {
+      const time = apiDatetimeToMs(value);
+      if (time !== null && time > latestTime) {
         latestTime = time;
       }
     });
@@ -502,8 +503,8 @@ export default function BoardDetailPage() {
     items.forEach((agent) => {
       const value = agent.updated_at ?? agent.last_seen_at;
       if (!value) return;
-      const time = new Date(value).getTime();
-      if (!Number.isNaN(time) && time > latestTime) {
+      const time = apiDatetimeToMs(value);
+      if (time !== null && time > latestTime) {
         latestTime = time;
       }
     });
@@ -576,8 +577,8 @@ export default function BoardDetailPage() {
   const latestChatTimestamp = (items: BoardChatMessage[]) => {
     if (!items.length) return undefined;
     const latest = items.reduce((max, item) => {
-      const ts = new Date(item.created_at).getTime();
-      return Number.isNaN(ts) ? max : Math.max(max, ts);
+      const ts = apiDatetimeToMs(item.created_at);
+      return ts === null ? max : Math.max(max, ts);
     }, 0);
     if (!latest) return undefined;
     return new Date(latest).toISOString();
@@ -647,14 +648,14 @@ export default function BoardDetailPage() {
                       (item) => item.id === payload.memory?.id,
                     );
                     if (exists) return prev;
-                    const next = [...prev, payload.memory as BoardChatMessage];
-                    next.sort((a, b) => {
-                      const aTime = new Date(a.created_at).getTime();
-                      const bTime = new Date(b.created_at).getTime();
-                      return aTime - bTime;
-                    });
-                    return next;
-                  });
+	                    const next = [...prev, payload.memory as BoardChatMessage];
+	                    next.sort((a, b) => {
+	                      const aTime = apiDatetimeToMs(a.created_at) ?? 0;
+	                      const bTime = apiDatetimeToMs(b.created_at) ?? 0;
+	                      return aTime - bTime;
+	                    });
+	                    return next;
+	                  });
                 }
               } catch {
                 // ignore malformed
@@ -908,25 +909,24 @@ export default function BoardDetailPage() {
                     const exists = prev.some((item) => item.id === payload.comment?.id);
                     if (exists) {
                       return prev;
-                    }
-                    const createdAt = payload.comment?.created_at;
-                    const createdMs = createdAt ? new Date(createdAt).getTime() : NaN;
-                    if (prev.length === 0 || Number.isNaN(createdMs)) {
-                      return [...prev, payload.comment as TaskComment];
-                    }
-                    const last = prev[prev.length - 1];
-                    const lastMs = last?.created_at ? new Date(last.created_at).getTime() : NaN;
-                    if (!Number.isNaN(lastMs) && createdMs >= lastMs) {
-                      return [...prev, payload.comment as TaskComment];
-                    }
-                    const next = [...prev, payload.comment as TaskComment];
-                    next.sort((a, b) => {
-                      const aTime = new Date(a.created_at).getTime();
-                      const bTime = new Date(b.created_at).getTime();
-                      return aTime - bTime;
-                    });
-                    return next;
-                  });
+	                    }
+	                    const createdMs = apiDatetimeToMs(payload.comment?.created_at);
+	                    if (prev.length === 0 || createdMs === null) {
+	                      return [...prev, payload.comment as TaskComment];
+	                    }
+	                    const last = prev[prev.length - 1];
+	                    const lastMs = apiDatetimeToMs(last?.created_at);
+	                    if (lastMs !== null && createdMs >= lastMs) {
+	                      return [...prev, payload.comment as TaskComment];
+	                    }
+	                    const next = [...prev, payload.comment as TaskComment];
+	                    next.sort((a, b) => {
+	                      const aTime = apiDatetimeToMs(a.created_at) ?? 0;
+	                      const bTime = apiDatetimeToMs(b.created_at) ?? 0;
+	                      return aTime - bTime;
+	                    });
+	                    return next;
+	                  });
                 } else if (payload.task) {
                   setTasks((prev) => {
                     const index = prev.findIndex((item) => item.id === payload.task?.id);
@@ -1159,16 +1159,16 @@ export default function BoardDetailPage() {
       const created = result.data;
       if (created.tags?.includes("chat")) {
         setChatMessages((prev) => {
-          const exists = prev.some((item) => item.id === created.id);
-          if (exists) return prev;
-          const next = [...prev, created];
-          next.sort((a, b) => {
-            const aTime = new Date(a.created_at).getTime();
-            const bTime = new Date(b.created_at).getTime();
-            return aTime - bTime;
-          });
-          return next;
-        });
+	          const exists = prev.some((item) => item.id === created.id);
+	          if (exists) return prev;
+	          const next = [...prev, created];
+	          next.sort((a, b) => {
+	            const aTime = apiDatetimeToMs(a.created_at) ?? 0;
+	            const bTime = apiDatetimeToMs(b.created_at) ?? 0;
+	            return aTime - bTime;
+	          });
+	          return next;
+	        });
       }
       return true;
     } catch (err) {
@@ -1209,8 +1209,8 @@ export default function BoardDetailPage() {
 
   const orderedLiveFeed = useMemo(() => {
     return [...liveFeed].sort((a, b) => {
-      const aTime = new Date(a.created_at).getTime();
-      const bTime = new Date(b.created_at).getTime();
+      const aTime = apiDatetimeToMs(a.created_at) ?? 0;
+      const bTime = apiDatetimeToMs(b.created_at) ?? 0;
       return bTime - aTime;
     });
   }, [liveFeed]);
@@ -1320,8 +1320,8 @@ export default function BoardDetailPage() {
       if (result.status !== 200) throw new Error("Unable to load comments.");
       const items = [...(result.data.items ?? [])];
       items.sort((a, b) => {
-        const aTime = new Date(a.created_at).getTime();
-        const bTime = new Date(b.created_at).getTime();
+        const aTime = apiDatetimeToMs(a.created_at) ?? 0;
+        const bTime = apiDatetimeToMs(b.created_at) ?? 0;
         return aTime - bTime;
       });
       setComments(items);
@@ -1631,8 +1631,8 @@ export default function BoardDetailPage() {
 
   const formatTaskTimestamp = (value?: string | null) => {
     if (!value) return "—";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "—";
+    const date = parseApiDatetime(value);
+    if (!date) return "—";
     return date.toLocaleString(undefined, {
       month: "short",
       day: "numeric",
@@ -1669,8 +1669,8 @@ export default function BoardDetailPage() {
 
   const formatApprovalTimestamp = (value?: string | null) => {
     if (!value) return "—";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
+    const date = parseApiDatetime(value);
+    if (!date) return value;
     return date.toLocaleString(undefined, {
       month: "short",
       day: "numeric",

@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select";
 import SearchableSelect from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
+import { localDateInputToUtcIso, toLocalDateInput } from "@/lib/datetime";
 
 const slugify = (value: string) =>
   value
@@ -39,13 +40,6 @@ const slugify = (value: string) =>
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "") || "board";
-
-const toDateInput = (value?: string | null) => {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
-};
 
 export default function EditBoardPage() {
   const { isSignedIn } = useAuth();
@@ -167,7 +161,7 @@ export default function EditBoardPage() {
       ? JSON.stringify(baseBoard.success_metrics, null, 2)
       : "");
   const resolvedTargetDate =
-    targetDate ?? toDateInput(baseBoard?.target_date);
+    targetDate ?? toLocalDateInput(baseBoard?.target_date);
 
   const displayGatewayId = resolvedGatewayId || gateways[0]?.id || "";
 
@@ -193,7 +187,7 @@ export default function EditBoardPage() {
     setSuccessMetrics(
       updated.success_metrics ? JSON.stringify(updated.success_metrics, null, 2) : "",
     );
-    setTargetDate(toDateInput(updated.target_date));
+    setTargetDate(toLocalDateInput(updated.target_date));
     setIsOnboardingOpen(false);
   };
 
@@ -231,9 +225,7 @@ export default function EditBoardPage() {
       board_type: resolvedBoardType,
       objective: resolvedObjective.trim() || null,
       success_metrics: parsedMetrics,
-      target_date: resolvedTargetDate
-        ? new Date(resolvedTargetDate).toISOString()
-        : null,
+      target_date: localDateInputToUtcIso(resolvedTargetDate),
     };
 
     updateBoardMutation.mutate({ boardId, data: payload });

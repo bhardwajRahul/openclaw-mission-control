@@ -23,6 +23,7 @@ import {
   type ChartConfig,
 } from "@/components/charts/chart";
 import { Button } from "@/components/ui/button";
+import { apiDatetimeToMs, parseApiDatetime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 type Approval = ApprovalRead & { status: string };
@@ -42,8 +43,8 @@ type BoardApprovalsPanelProps = {
 
 const formatTimestamp = (value?: string | null) => {
   if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = parseApiDatetime(value);
+  if (!date) return value;
   return date.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -241,7 +242,10 @@ export function BoardApprovalsPanel({
       const pendingNext = [...approvals]
         .filter((item) => item.id !== approvalId)
         .filter((item) => item.status === "pending")
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+        .sort(
+          (a, b) =>
+            (apiDatetimeToMs(b.created_at) ?? 0) - (apiDatetimeToMs(a.created_at) ?? 0),
+        )[0]
         ?.id;
       if (pendingNext) {
         setSelectedId(pendingNext);
@@ -302,8 +306,8 @@ export function BoardApprovalsPanel({
   const sortedApprovals = useMemo(() => {
     const sortByTime = (items: Approval[]) =>
       [...items].sort((a, b) => {
-        const aTime = new Date(a.created_at).getTime();
-        const bTime = new Date(b.created_at).getTime();
+        const aTime = apiDatetimeToMs(a.created_at) ?? 0;
+        const bTime = apiDatetimeToMs(b.created_at) ?? 0;
         return bTime - aTime;
       });
     const pending = sortByTime(

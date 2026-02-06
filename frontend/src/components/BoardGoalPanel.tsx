@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { parseApiDatetime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 type BoardGoal = {
@@ -21,8 +22,8 @@ type BoardGoalPanelProps = {
 
 const formatTargetDate = (value?: string | null) => {
   if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = parseApiDatetime(value);
+  if (!date) return value;
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",

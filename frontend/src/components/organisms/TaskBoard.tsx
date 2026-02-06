@@ -3,6 +3,7 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { TaskCard } from "@/components/molecules/TaskCard";
+import { parseApiDatetime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
 type TaskStatus = "inbox" | "in_progress" | "review" | "done";
@@ -74,8 +75,8 @@ const columns: Array<{
 
 const formatDueDate = (value?: string | null) => {
   if (!value) return undefined;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return undefined;
+  const date = parseApiDatetime(value);
+  if (!date) return undefined;
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",

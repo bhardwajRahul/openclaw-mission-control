@@ -27,6 +27,7 @@ import {
   type dashboardMetricsApiV1MetricsDashboardGetResponse,
   useDashboardMetricsApiV1MetricsDashboardGet,
 } from "@/api/generated/metrics/metrics";
+import { parseApiDatetime } from "@/lib/datetime";
 
 type RangeKey = "24h" | "7d";
 type BucketKey = "hour" | "day";
@@ -91,8 +92,8 @@ const updatedFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 const formatPeriod = (value: string, bucket: BucketKey) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
+  const date = parseApiDatetime(value);
+  if (!date) return "";
   return bucket === "hour" ? hourFormatter.format(date) : dayFormatter.format(date);
 };
 
@@ -324,8 +325,8 @@ export default function DashboardPage() {
 
   const updatedAtLabel = useMemo(() => {
     if (!metrics?.generated_at) return null;
-    const date = new Date(metrics.generated_at);
-    if (Number.isNaN(date.getTime())) return null;
+    const date = parseApiDatetime(metrics.generated_at);
+    if (!date) return null;
     return updatedFormatter.format(date);
   }, [metrics]);
 
