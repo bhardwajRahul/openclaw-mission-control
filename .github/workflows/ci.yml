@@ -121,6 +121,9 @@ jobs:
       - name: Run Cypress E2E
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+          # Cypress exposes env vars prefixed with CYPRESS_ via Cypress.env().
+          CYPRESS_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          # Also set for the app itself.
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
         run: |
           cd frontend
