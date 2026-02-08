@@ -64,6 +64,8 @@ TASK_EVENT_TYPES = {
     "task.comment",
 }
 SSE_SEEN_MAX = 2000
+TASK_SNIPPET_MAX_LEN = 500
+TASK_SNIPPET_TRUNCATED_LEN = 497
 
 
 def _comment_validation_error() -> HTTPException:
@@ -81,6 +83,13 @@ def _blocked_task_error(blocked_by_task_ids: Sequence[UUID]) -> HTTPException:
             "blocked_by_task_ids": [str(value) for value in blocked_by_task_ids],
         },
     )
+
+
+def _truncate_snippet(value: str) -> str:
+    text = value.strip()
+    if len(text) <= TASK_SNIPPET_MAX_LEN:
+        return text
+    return f"{text[:TASK_SNIPPET_TRUNCATED_LEN]}..."
 
 
 async def has_valid_recent_comment(
@@ -282,9 +291,7 @@ async def _notify_agent_on_task_assign(
     config = await _gateway_config(session, board)
     if config is None:
         return
-    description = (task.description or "").strip()
-    if len(description) > 500:
-        description = f"{description[:497]}..."
+    description = _truncate_snippet(task.description or "")
     details = [
         f"Board: {board.name}",
         f"Task: {task.title}",
@@ -340,9 +347,7 @@ async def _notify_lead_on_task_create(
     config = await _gateway_config(session, board)
     if config is None:
         return
-    description = (task.description or "").strip()
-    if len(description) > 500:
-        description = f"{description[:497]}..."
+    description = _truncate_snippet(task.description or "")
     details = [
         f"Board: {board.name}",
         f"Task: {task.title}",
@@ -397,9 +402,7 @@ async def _notify_lead_on_task_unassigned(
     config = await _gateway_config(session, board)
     if config is None:
         return
-    description = (task.description or "").strip()
-    if len(description) > 500:
-        description = f"{description[:497]}..."
+    description = _truncate_snippet(task.description or "")
     details = [
         f"Board: {board.name}",
         f"Task: {task.title}",
@@ -486,33 +489,31 @@ async def stream_tasks(
                 if len(seen_queue) > SSE_SEEN_MAX:
                     oldest = seen_queue.popleft()
                     seen_ids.discard(oldest)
-                if event.created_at > last_seen:
-                    last_seen = event.created_at
+                last_seen = max(event.created_at, last_seen)
                 payload: dict[str, object] = {"type": event.event_type}
                 if event.event_type == "task.comment":
                     payload["comment"] = _serialize_comment(event)
+                elif task is None:
+                    payload["task"] = None
                 else:
-                    if task is None:
-                        payload["task"] = None
-                    else:
-                        dep_list = deps_map.get(task.id, [])
-                        blocked_by = blocked_by_dependency_ids(
-                            dependency_ids=dep_list,
-                            status_by_id=dep_status,
+                    dep_list = deps_map.get(task.id, [])
+                    blocked_by = blocked_by_dependency_ids(
+                        dependency_ids=dep_list,
+                        status_by_id=dep_status,
+                    )
+                    if task.status == "done":
+                        blocked_by = []
+                    payload["task"] = (
+                        TaskRead.model_validate(task, from_attributes=True)
+                        .model_copy(
+                            update={
+                                "depends_on_task_ids": dep_list,
+                                "blocked_by_task_ids": blocked_by,
+                                "is_blocked": bool(blocked_by),
+                            }
                         )
-                        if task.status == "done":
-                            blocked_by = []
-                        payload["task"] = (
-                            TaskRead.model_validate(task, from_attributes=True)
-                            .model_copy(
-                                update={
-                                    "depends_on_task_ids": dep_list,
-                                    "blocked_by_task_ids": blocked_by,
-                                    "is_blocked": bool(blocked_by),
-                                }
-                            )
-                            .model_dump(mode="json")
-                        )
+                        .model_dump(mode="json")
+                    )
                 yield {"event": "task", "data": json.dumps(payload)}
             await asyncio.sleep(2)
 
@@ -891,17 +892,14 @@ async def update_task(
     task.updated_at = utcnow()
 
     if "status" in updates and updates["status"] == "review":
-        if comment is not None and comment.strip():
-            if not comment.strip():
-                raise _comment_validation_error()
-        else:
-            if not await has_valid_recent_comment(
-                session,
-                task,
-                task.assigned_agent_id,
-                task.in_progress_at,
-            ):
-                raise _comment_validation_error()
+        comment_text = (comment or "").strip()
+        if not comment_text and not await has_valid_recent_comment(
+            session,
+            task,
+            task.assigned_agent_id,
+            task.in_progress_at,
+        ):
+            raise _comment_validation_error()
 
     session.add(task)
     await session.commit()
@@ -1083,9 +1081,7 @@ async def create_task_comment(
         board = await Board.objects.by_id(task.board_id).first(session) if task.board_id else None
         config = await _gateway_config(session, board) if board else None
         if board and config:
-            snippet = payload.message.strip()
-            if len(snippet) > 500:
-                snippet = f"{snippet[:497]}..."
+            snippet = _truncate_snippet(payload.message)
             actor_name = actor.agent.name if actor.actor_type == "agent" and actor.agent else "User"
             for agent in targets.values():
                 if not agent.openclaw_session_id:
