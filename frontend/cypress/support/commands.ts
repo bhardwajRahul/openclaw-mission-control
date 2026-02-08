@@ -56,8 +56,9 @@ Cypress.Commands.add("loginWithClerkOtp", () => {
   const emailSelector =
     'input[type="email"], input[name="identifier"], input[autocomplete="email"]';
   const otpSelector =
-    'input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]';
+    'input[autocomplete="one-time-code"], input[name*="code"], input[name^="code"], input[name^="code."], input[inputmode="numeric"]';
   const continueSelector = 'button[type="submit"], button';
+  const methodSelector = /email|code|otp|send code|verification|verify|use email/i;
 
   const fillEmailStep = (email: string) => {
     cy.get(emailSelector, { timeout: 20_000 })
@@ -65,13 +66,46 @@ Cypress.Commands.add("loginWithClerkOtp", () => {
       .clear()
       .type(email, { delay: 10 });
 
-    cy.get(continueSelector)
-      .contains(/continue|sign in|send|next/i)
+    cy.contains(continueSelector, /continue|sign in|send|next/i, { timeout: 20_000 })
+      .should("be.visible")
       .click({ force: true });
   };
 
+  const maybeSelectEmailCodeMethod = () => {
+    cy.get("body").then(($body) => {
+      const hasOtp = $body.find(otpSelector).length > 0;
+      if (hasOtp) return;
+
+      const candidates = $body
+        .find("button,a")
+        .toArray()
+        .filter((el) => methodSelector.test((el.textContent || "").trim()));
+
+      if (candidates.length > 0) {
+        cy.wrap(candidates[0]).click({ force: true });
+      }
+    });
+  };
+
+  const waitForOtpOrMethod = () => {
+    cy.get("body", { timeout: 60_000 }).should(($body) => {
+      const hasOtp = $body.find(otpSelector).length > 0;
+      const hasMethod = $body
+        .find("button,a")
+        .toArray()
+        .some((el) => methodSelector.test((el.textContent || "").trim()));
+      expect(
+        hasOtp || hasMethod,
+        "waiting for OTP input or verification method UI",
+      ).to.equal(true);
+    });
+  };
+
   const fillOtpAndSubmit = (otp: string) => {
-    cy.get(otpSelector, { timeout: 20_000 }).first().clear().type(otp, { delay: 10 });
+    waitForOtpOrMethod();
+    maybeSelectEmailCodeMethod();
+
+    cy.get(otpSelector, { timeout: 60_000 }).first().clear().type(otp, { delay: 10 });
 
     cy.get("body").then(($body) => {
       const hasSubmit = $body
@@ -79,40 +113,72 @@ Cypress.Commands.add("loginWithClerkOtp", () => {
         .toArray()
         .some((el) => /verify|continue|sign in|confirm/i.test(el.textContent || ""));
       if (hasSubmit) {
-        cy.get(continueSelector)
-          .contains(/verify|continue|sign in|confirm/i)
+        cy.contains(continueSelector, /verify|continue|sign in|confirm/i, { timeout: 20_000 })
+          .should("be.visible")
           .click({ force: true });
       }
     });
   };
 
   // Clerk SignIn can start on our app origin and then redirect to Clerk-hosted UI.
-  // We do email step first, then decide where the OTP step lives based on the *current* origin.
+  // Do email step first, then decide where the OTP step lives based on the *current* origin.
   fillEmailStep(opts.email);
 
-  cy.location("origin", { timeout: 20_000 }).then((origin) => {
+  cy.location("origin", { timeout: 60_000 }).then((origin) => {
     const current = normalizeOrigin(origin);
     if (current === opts.clerkOrigin) {
       cy.origin(
         opts.clerkOrigin,
         { args: { otp: opts.otp } },
         ({ otp }) => {
-          cy.get(
-            'input[autocomplete="one-time-code"], input[name*="code"], input[inputmode="numeric"]',
-            { timeout: 20_000 },
-          )
-            .first()
-            .clear()
-            .type(otp, { delay: 10 });
+          const otpSelector =
+            'input[autocomplete="one-time-code"], input[name*="code"], input[name^="code"], input[name^="code."], input[inputmode="numeric"]';
+          const continueSelector = 'button[type="submit"], button';
+          const methodSelector = /email|code|otp|send code|verification|verify|use email/i;
+
+          const maybeSelectEmailCodeMethod = () => {
+            cy.get("body").then(($body) => {
+              const hasOtp = $body.find(otpSelector).length > 0;
+              if (hasOtp) return;
+
+              const candidates = $body
+                .find("button,a")
+                .toArray()
+                .filter((el) => methodSelector.test((el.textContent || "").trim()));
+
+              if (candidates.length > 0) {
+                cy.wrap(candidates[0]).click({ force: true });
+              }
+            });
+          };
+
+          const waitForOtpOrMethod = () => {
+            cy.get("body", { timeout: 60_000 }).should(($body) => {
+              const hasOtp = $body.find(otpSelector).length > 0;
+              const hasMethod = $body
+                .find("button,a")
+                .toArray()
+                .some((el) => methodSelector.test((el.textContent || "").trim()));
+              expect(
+                hasOtp || hasMethod,
+                "waiting for OTP input or verification method UI",
+              ).to.equal(true);
+            });
+          };
+
+          waitForOtpOrMethod();
+          maybeSelectEmailCodeMethod();
+
+          cy.get(otpSelector, { timeout: 60_000 }).first().clear().type(otp, { delay: 10 });
 
           cy.get("body").then(($body) => {
             const hasSubmit = $body
-              .find('button[type="submit"], button')
+              .find(continueSelector)
               .toArray()
               .some((el) => /verify|continue|sign in|confirm/i.test(el.textContent || ""));
             if (hasSubmit) {
-              cy.get('button[type="submit"], button')
-                .contains(/verify|continue|sign in|confirm/i)
+              cy.contains(continueSelector, /verify|continue|sign in|confirm/i, { timeout: 20_000 })
+                .should("be.visible")
                 .click({ force: true });
             }
           });
