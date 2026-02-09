@@ -24,13 +24,13 @@ import type {
   GatewayCommandsResponse,
   GatewayCreate,
   GatewayRead,
+  GatewayResolveQuery,
   GatewaySessionHistoryResponse,
   GatewaySessionMessageRequest,
   GatewaySessionResponse,
   GatewaySessionsResponse,
   GatewayTemplatesSyncResult,
   GatewayUpdate,
-  GatewaysStatusApiV1GatewaysStatusGetParams,
   GatewaysStatusResponse,
   GetGatewaySessionApiV1GatewaysSessionsSessionIdGetParams,
   GetSessionHistoryApiV1GatewaysSessionsSessionIdHistoryGetParams,
@@ -48,6 +48,7 @@ import { customFetch } from "../../mutator";
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
 /**
+ * Return gateway connectivity and session status.
  * @summary Gateways Status
  */
 export type gatewaysStatusApiV1GatewaysStatusGetResponse200 = {
@@ -73,48 +74,36 @@ export type gatewaysStatusApiV1GatewaysStatusGetResponse =
   | gatewaysStatusApiV1GatewaysStatusGetResponseSuccess
   | gatewaysStatusApiV1GatewaysStatusGetResponseError;
 
-export const getGatewaysStatusApiV1GatewaysStatusGetUrl = (
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
-) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      normalizedParams.append(key, value === null ? "null" : value.toString());
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0
-    ? `/api/v1/gateways/status?${stringifiedParams}`
-    : `/api/v1/gateways/status`;
+export const getGatewaysStatusApiV1GatewaysStatusGetUrl = () => {
+  return `/api/v1/gateways/status`;
 };
 
 export const gatewaysStatusApiV1GatewaysStatusGet = async (
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery: GatewayResolveQuery,
   options?: RequestInit,
 ): Promise<gatewaysStatusApiV1GatewaysStatusGetResponse> => {
   return customFetch<gatewaysStatusApiV1GatewaysStatusGetResponse>(
-    getGatewaysStatusApiV1GatewaysStatusGetUrl(params),
+    getGatewaysStatusApiV1GatewaysStatusGetUrl(),
     {
       ...options,
       method: "GET",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(gatewayResolveQuery),
     },
   );
 };
 
 export const getGatewaysStatusApiV1GatewaysStatusGetQueryKey = (
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery?: GatewayResolveQuery,
 ) => {
-  return [`/api/v1/gateways/status`, ...(params ? [params] : [])] as const;
+  return [`/api/v1/gateways/status`, gatewayResolveQuery] as const;
 };
 
 export const getGatewaysStatusApiV1GatewaysStatusGetQueryOptions = <
   TData = Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>,
   TError = HTTPValidationError,
 >(
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery: GatewayResolveQuery,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -130,12 +119,15 @@ export const getGatewaysStatusApiV1GatewaysStatusGetQueryOptions = <
 
   const queryKey =
     queryOptions?.queryKey ??
-    getGatewaysStatusApiV1GatewaysStatusGetQueryKey(params);
+    getGatewaysStatusApiV1GatewaysStatusGetQueryKey(gatewayResolveQuery);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>
   > = ({ signal }) =>
-    gatewaysStatusApiV1GatewaysStatusGet(params, { signal, ...requestOptions });
+    gatewaysStatusApiV1GatewaysStatusGet(gatewayResolveQuery, {
+      signal,
+      ...requestOptions,
+    });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>,
@@ -154,7 +146,7 @@ export function useGatewaysStatusApiV1GatewaysStatusGet<
   TData = Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>,
   TError = HTTPValidationError,
 >(
-  params: undefined | GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery: GatewayResolveQuery,
   options: {
     query: Partial<
       UseQueryOptions<
@@ -181,7 +173,7 @@ export function useGatewaysStatusApiV1GatewaysStatusGet<
   TData = Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>,
   TError = HTTPValidationError,
 >(
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery: GatewayResolveQuery,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -208,7 +200,7 @@ export function useGatewaysStatusApiV1GatewaysStatusGet<
   TData = Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>,
   TError = HTTPValidationError,
 >(
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery: GatewayResolveQuery,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -231,7 +223,7 @@ export function useGatewaysStatusApiV1GatewaysStatusGet<
   TData = Awaited<ReturnType<typeof gatewaysStatusApiV1GatewaysStatusGet>>,
   TError = HTTPValidationError,
 >(
-  params?: GatewaysStatusApiV1GatewaysStatusGetParams,
+  gatewayResolveQuery: GatewayResolveQuery,
   options?: {
     query?: Partial<
       UseQueryOptions<
@@ -247,7 +239,7 @@ export function useGatewaysStatusApiV1GatewaysStatusGet<
   queryKey: DataTag<QueryKey, TData, TError>;
 } {
   const queryOptions = getGatewaysStatusApiV1GatewaysStatusGetQueryOptions(
-    params,
+    gatewayResolveQuery,
     options,
   );
 
@@ -260,6 +252,7 @@ export function useGatewaysStatusApiV1GatewaysStatusGet<
 }
 
 /**
+ * List sessions for a gateway associated with a board.
  * @summary List Gateway Sessions
  */
 export type listGatewaySessionsApiV1GatewaysSessionsGetResponse200 = {
@@ -492,6 +485,7 @@ export function useListGatewaySessionsApiV1GatewaysSessionsGet<
 }
 
 /**
+ * Get a specific gateway session by key.
  * @summary Get Gateway Session
  */
 export type getGatewaySessionApiV1GatewaysSessionsSessionIdGetResponse200 = {
@@ -774,6 +768,7 @@ export function useGetGatewaySessionApiV1GatewaysSessionsSessionIdGet<
 }
 
 /**
+ * Fetch chat history for a gateway session.
  * @summary Get Session History
  */
 export type getSessionHistoryApiV1GatewaysSessionsSessionIdHistoryGetResponse200 =
@@ -1081,6 +1076,7 @@ export function useGetSessionHistoryApiV1GatewaysSessionsSessionIdHistoryGet<
 }
 
 /**
+ * Send a message into a specific gateway session.
  * @summary Send Gateway Session Message
  */
 export type sendGatewaySessionMessageApiV1GatewaysSessionsSessionIdMessagePostResponse200 =
@@ -1278,6 +1274,7 @@ export const useSendGatewaySessionMessageApiV1GatewaysSessionsSessionIdMessagePo
     );
   };
 /**
+ * Return supported gateway protocol methods and events.
  * @summary Gateway Commands
  */
 export type gatewayCommandsApiV1GatewaysCommandsGetResponse200 = {
@@ -1452,6 +1449,7 @@ export function useGatewayCommandsApiV1GatewaysCommandsGet<
 }
 
 /**
+ * List gateways for the caller's organization.
  * @summary List Gateways
  */
 export type listGatewaysApiV1GatewaysGetResponse200 = {
@@ -1662,6 +1660,7 @@ export function useListGatewaysApiV1GatewaysGet<
 }
 
 /**
+ * Create a gateway and provision or refresh its main agent.
  * @summary Create Gateway
  */
 export type createGatewayApiV1GatewaysPostResponse200 = {
@@ -1779,6 +1778,7 @@ export const useCreateGatewayApiV1GatewaysPost = <
   );
 };
 /**
+ * Return one gateway by id for the caller's organization.
  * @summary Get Gateway
  */
 export type getGatewayApiV1GatewaysGatewayIdGetResponse200 = {
@@ -1986,6 +1986,7 @@ export function useGetGatewayApiV1GatewaysGatewayIdGet<
 }
 
 /**
+ * Patch a gateway and refresh the main-agent provisioning state.
  * @summary Update Gateway
  */
 export type updateGatewayApiV1GatewaysGatewayIdPatchResponse200 = {
@@ -2113,6 +2114,7 @@ export const useUpdateGatewayApiV1GatewaysGatewayIdPatch = <
   );
 };
 /**
+ * Delete a gateway in the caller's organization.
  * @summary Delete Gateway
  */
 export type deleteGatewayApiV1GatewaysGatewayIdDeleteResponse200 = {
@@ -2232,6 +2234,7 @@ export const useDeleteGatewayApiV1GatewaysGatewayIdDelete = <
   );
 };
 /**
+ * Sync templates for a gateway and optionally rotate runtime settings.
  * @summary Sync Gateway Templates
  */
 export type syncGatewayTemplatesApiV1GatewaysGatewayIdTemplatesSyncPostResponse200 =

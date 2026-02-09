@@ -5,6 +5,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * Payload for partial gateway updates.
+ */
 export interface GatewayUpdate {
   name?: string | null;
   url?: string | null;

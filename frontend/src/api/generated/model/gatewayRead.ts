@@ -5,6 +5,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * Gateway payload returned from read endpoints.
+ */
 export interface GatewayRead {
   name: string;
   url: string;
