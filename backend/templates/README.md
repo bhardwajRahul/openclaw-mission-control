@@ -1,198 +1,140 @@
-# `backend/templates/` — Gateway workspace templates
+# Backend Templates (Product Documentation)
 
-This directory contains **Jinja2 templates** that Mission Control renders and syncs into each OpenClaw gateway agent’s on-disk workspace (the `workspace-*` folder).
+This folder contains the Markdown templates Mission Control syncs into OpenClaw agent workspaces.
 
-These files are the agent’s “operating manual” (instructions, heartbeat rules, tools, identity, etc.).
+- Location in repo: `backend/templates/`
+- Runtime location in backend container: `/app/templates`
+- Render engine: Jinja2
 
-## Where templates are rendered / synced
+## What this is for
 
-**Rendering engine**
-- Renderer: Jinja2 `Environment(FileSystemLoader(templates_root))`.
-- Config (important for safe changes):
-  - `undefined=StrictUndefined` → **missing variables crash render** (good: prevents silent partial templates).
-  - `autoescape=False` → markdown is rendered “verbatim” (no HTML escaping).
-  - `keep_trailing_newline=True`.
+Use these templates to control what an agent sees in workspace files like:
 
-Evidence:
-- `backend/app/services/openclaw/provisioning.py::_template_env()`
+- `AGENTS.md`
+- `HEARTBEAT.md`
+- `TOOLS.md`
+- `IDENTITY.md`
+- `USER.md`
+- `MEMORY.md`
 
-**Sync workflows**
-- API: `POST /api/v1/gateways/{gateway_id}/templates/sync`
-  - Router: `backend/app/api/gateways.py` (`sync_gateway_templates`).
-  - DB-backed service: `backend/app/services/openclaw/provisioning_db.py::OpenClawProvisioningService.sync_gateway_templates()`.
-- CLI: `backend/scripts/sync_gateway_templates.py --gateway-id <uuid> [--board-id <uuid>] [--reset-sessions] [--rotate-tokens] [--force-bootstrap]`
+When a gateway template sync runs, these templates are rendered with agent/board context and written into each workspace.
 
-## Which files are provisioned
+## How rendering works
 
-Default set (rendered for each agent workspace):
-- `AGENTS.md`, `SOUL.md`, `TASK_SOUL.md`, `SELF.md`, `AUTONOMY.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOT.md`, `BOOTSTRAP.md`, `MEMORY.md`
+### Rendering configuration
 
-Evidence:
-- `backend/app/services/openclaw/constants.py::DEFAULT_GATEWAY_FILES`
+Defined in `backend/app/services/openclaw/provisioning.py` (`_template_env()`):
 
-### “Main agent” template mapping
+- `StrictUndefined` enabled (missing variables fail fast)
+- `autoescape=False` (Markdown output)
+- `keep_trailing_newline=True`
 
-The gateway *main* agent uses a few different templates (prefixed `MAIN_...`) for some files:
+### Context builders
 
-| Workspace file | Main-agent template |
-|---|---|
-| `AGENTS.md` | `MAIN_AGENTS.md` |
-| `HEARTBEAT.md` | `MAIN_HEARTBEAT.md` |
-| `USER.md` | `MAIN_USER.md` |
-| `BOOT.md` | `MAIN_BOOT.md` |
-| `TOOLS.md` | `MAIN_TOOLS.md` |
+- Board agent context: `_build_context()`
+- Main agent context: `_build_main_context()`
+- User mapping: `_user_context()`
+- Identity mapping: `_identity_context()`
 
-Evidence:
-- `backend/app/services/openclaw/constants.py::MAIN_TEMPLATE_MAP`
+## Sync entry points
 
-## Template variables (context)
+### API
 
-Templates are rendered with a context built from:
-- Agent + board + gateway fields
-- Mission Control backend settings (`base_url`)
-- Optional user profile fields
-- Agent identity profile fields
+`POST /api/v1/gateways/{gateway_id}/templates/sync`
 
-Evidence:
-- `backend/app/services/openclaw/provisioning.py::_build_context()` (board-scoped agents)
-- `backend/app/services/openclaw/provisioning.py::_build_main_context()` (main agent)
-- Identity/user mapping: `backend/app/services/openclaw/provisioning.py::_identity_context()`, `_user_context()`
+- Router: `backend/app/api/gateways.py` (`sync_gateway_templates`)
+- Service: `backend/app/services/openclaw/provisioning_db.py`
 
-### Common context keys
+### Script
 
-These keys are available to *all* templates (agent + main):
+`backend/scripts/sync_gateway_templates.py`
 
-- `agent_name`
-- `agent_id`
-- `session_key`
-- `base_url`
-- `auth_token`
-- `main_session_key`
+Example:
+
+```bash
+python backend/scripts/sync_gateway_templates.py --gateway-id <uuid>
+```
+
+## Files included in sync
+
+Default synced files are defined in:
+
+- `backend/app/services/openclaw/constants.py` (`DEFAULT_GATEWAY_FILES`)
+
+Main-agent template mapping is defined in:
+
+- `backend/app/services/openclaw/constants.py` (`MAIN_TEMPLATE_MAP`)
+
+## HEARTBEAT.md selection logic
+
+`HEARTBEAT.md` is selected dynamically:
+
+- Board lead -> `HEARTBEAT_LEAD.md`
+- Non-lead agent -> `HEARTBEAT_AGENT.md`
+
+See:
+
+- `HEARTBEAT_LEAD_TEMPLATE`, `HEARTBEAT_AGENT_TEMPLATE` in constants
+- `_heartbeat_template_name()` in provisioning
+
+## Template variables reference
+
+### Core keys (all templates)
+
+- `agent_name`, `agent_id`, `session_key`
+- `base_url`, `auth_token`, `main_session_key`
 - `workspace_root`
 
-User fields (may be empty strings):
+### User keys
+
 - `user_name`, `user_preferred_name`, `user_pronouns`, `user_timezone`
 - `user_notes`, `user_context`
 
-Identity fields (defaults apply if missing):
-- `identity_role`
-- `identity_communication_style`
-- `identity_emoji`
+### Identity keys
 
-Extra identity fields (optional; may be empty strings):
+- `identity_role`, `identity_communication_style`, `identity_emoji`
 - `identity_autonomy_level`, `identity_verbosity`, `identity_output_format`, `identity_update_cadence`
 - `identity_purpose`, `identity_personality`, `identity_custom_instructions`
 
-Evidence:
-- Defaults + mapping: `backend/app/services/openclaw/constants.py::{DEFAULT_IDENTITY_PROFILE, IDENTITY_PROFILE_FIELDS, EXTRA_IDENTITY_PROFILE_FIELDS}`
+### Board-agent-only keys
 
-### Board-scoped-only keys
-
-Only board-scoped agents receive:
 - `board_id`, `board_name`, `board_type`
 - `board_objective`, `board_success_metrics`, `board_target_date`
-- `board_goal_confirmed`
-- `is_board_lead`
+- `board_goal_confirmed`, `is_board_lead`
 - `workspace_path`
-- `board_*` fields above
 
-Evidence:
-- `backend/app/services/openclaw/provisioning.py::_build_context()`
+## Safe change checklist
 
-## HEARTBEAT template selection
+Before merging template changes:
 
-`HEARTBEAT.md` is special: it renders one of two templates depending on whether the agent is a board lead:
-- lead: `HEARTBEAT_LEAD.md`
-- agent: `HEARTBEAT_AGENT.md`
+1. Do not introduce new `{{ var }}` placeholders unless context builders provide them.
+2. Keep changes additive where possible.
+3. Review both board-agent and `MAIN_*` templates when changing shared behavior.
+4. Preserve agent-editable files behavior (`PRESERVE_AGENT_EDITABLE_FILES`).
+5. Run docs quality checks and CI.
 
-Evidence:
-- Template names: `backend/app/services/openclaw/constants.py::{HEARTBEAT_LEAD_TEMPLATE, HEARTBEAT_AGENT_TEMPLATE}`
-- Selection logic: `backend/app/services/openclaw/provisioning.py::_heartbeat_template_name()`
+## Local validation
 
-## Safe change guidelines
+### Fast check
 
-1) **Assume templates are user-facing instructions**
-   - Keep edits backwards compatible when possible.
-   - Prefer additive changes (new sections) over rewriting major flows.
-
-2) **Do not break rendering**
-   - Because `StrictUndefined` is enabled, adding `{{ new_var }}` requires also adding that key to the context builder(s).
-
-3) **Preserved (agent-editable) files**
-   Some files are intentionally not overwritten on template sync if they already exist in the agent workspace (the agent/human may edit them):
-   - `SELF.md`, `USER.md`, `MEMORY.md`, `TASK_SOUL.md`
-
-   Evidence:
-   - `backend/app/services/openclaw/constants.py::PRESERVE_AGENT_EDITABLE_FILES`
-
-4) **Main-agent vs board-agent differences**
-   - If changing `TOOLS.md`, `HEARTBEAT.md`, etc., check whether the change should also apply to the main-agent templates (`MAIN_*`).
-
-5) **Prefer small PRs + keep template scope task-scoped**
-
-## Previewing / testing template changes locally
-
-### Option A (recommended): run template sync against a dev gateway
-Use either:
-- API: `POST /api/v1/gateways/{gateway_id}/templates/sync`
-- CLI: `backend/scripts/sync_gateway_templates.py --gateway-id <uuid> ...`
-
-Then inspect the provisioned files in the gateway’s workspace directory (the exact path is computed in `backend/app/services/openclaw/provisioning.py::_workspace_path()`).
-
-### Option B: quick offline render (Jinja2 only)
-This is useful for confirming Markdown formatting and variable names.
+Run CI-relevant docs checks locally:
 
 ```bash
-python3 - <<'PY'
-from pathlib import Path
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
-
-root = Path('backend/templates')
-env = Environment(
-    loader=FileSystemLoader(root),
-    undefined=StrictUndefined,
-    autoescape=False,
-    keep_trailing_newline=True,
-)
-
-# Minimal dummy context (must include any variables referenced by the template).
-ctx = {
-    'agent_name': 'ExampleAgent',
-    'agent_id': '00000000-0000-0000-0000-000000000000',
-    'board_id': '00000000-0000-0000-0000-000000000000',
-    'board_name': 'Example Board',
-    'board_type': 'general',
-    'board_objective': '',
-    'board_success_metrics': '{}',
-    'board_target_date': '',
-    'board_goal_confirmed': 'false',
-    'is_board_lead': 'false',
-    'session_key': 'agent:example',
-    'workspace_path': '/tmp/workspace-example',
-    'base_url': 'http://localhost:8000',
-    'auth_token': 'REDACTED',
-    'main_session_key': 'agent:gateway-main',
-    'workspace_root': '/tmp',
-    'user_name': '',
-    'user_preferred_name': '',
-    'user_pronouns': '',
-    'user_timezone': '',
-    'user_notes': '',
-    'user_context': '',
-    'identity_role': 'Generalist',
-    'identity_communication_style': 'direct',
-    'identity_emoji': ':gear:',
-    'identity_autonomy_level': '',
-    'identity_verbosity': '',
-    'identity_output_format': '',
-    'identity_update_cadence': '',
-    'identity_purpose': '',
-    'identity_personality': '',
-    'identity_custom_instructions': '',
-}
-
-print(env.get_template('AGENTS.md').render(**ctx))
-PY
+make docs-check
 ```
 
-If the template references a variable not present in `ctx`, Jinja2 will raise immediately (by design).
+### Full validation
+
+- Push branch
+- Confirm PR checks are green
+- Optionally run template sync on a dev gateway and inspect generated workspace files
+
+## FAQ
+
+### Why did rendering fail after adding a variable?
+
+Because `StrictUndefined` is enabled. Add that key to `_build_context()` / `_build_main_context()` (and related mappers) before using it in templates.
+
+### Why didn’t my edit appear in an agent workspace?
+
+Template sync may not have run yet, or the target file is preserved as agent-editable. Check sync status and preservation rules in constants.
