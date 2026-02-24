@@ -3,13 +3,17 @@
 
 /// <reference types="cypress" />
 
-// Next.js hydration mismatch can happen non-deterministically in CI/dev mode.
-// Ignore this specific runtime error so E2E assertions can continue.
+import { addClerkCommands } from "@clerk/testing/cypress";
+
+// Clerk/Next.js occasionally throws a non-deterministic hydration mismatch
+// on /sign-in. Ignore this known UI noise so E2E assertions can proceed.
 Cypress.on("uncaught:exception", (err) => {
-  if (err.message?.includes("Hydration failed")) {
+  if (err?.message?.includes("Hydration failed")) {
     return false;
   }
   return true;
 });
+
+addClerkCommands({ Cypress, cy });
 
 import "./commands";
